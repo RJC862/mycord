@@ -53,9 +53,7 @@ int process_args(int argc, char *argv[]) {
 	bool ip_specified = false;
 	bool domain_specified = false;
 
-	in_port_t port = settings.server.sin_port;
 	sa_family_t address_family = settings.server.sin_family;
-	struct in_addr ip_address = settings.server.sin_addr;
 
 	// parsing arguments
 	for (int i = 1; i < argc; i++) {
@@ -75,19 +73,21 @@ int process_args(int argc, char *argv[]) {
 				unsigned long port_number = strtoul(argv[i+1], NULL, 10);
 
 				if (port_number > 65535) {
-					// error: invalid port number
+					perror("Error: invalid port number");
 					return -1;
 				}
 
 				// assigning the port number with htons
-				port = htons((uint16_t) port_number);
+				settings.server.sin_port = htons((uint16_t) port_number);
 
 				// skipping past the port number since it was processed
 				i++;
 
 			} else {
-				// error: missing port argument
+
+				perror("Missing port number");
 				return -1;
+
 			}
 		} else if (strcmp(argv[i], "ip") == 0) { // processing ip
 			
@@ -96,11 +96,13 @@ int process_args(int argc, char *argv[]) {
 			if (i + 1 < argc){
 
 				// setting the IP
-				int inet_pton_status = inet_pton(address_family, argv[i+1], &ip_address); 
+				int inet_pton_status = inet_pton(address_family, argv[i+1], &settings.server.sin_addr); 
 				
 				if (inet_pton_status != 1) {
-					// error: invalid ip address
+					
+					perror("Error: invalid IP address");
 					return -1;
+
 				} 
 
 				// skipping past the ip address since it was processed
@@ -109,7 +111,7 @@ int process_args(int argc, char *argv[]) {
 			} else {
 
 				// setting the default ip address
-				inet_pton(address_family, "127.0.0.1", &ip_address);
+				inet_pton(address_family, "127.0.0.1", &settings.server.sin_addr);
 
 			}
 
@@ -120,17 +122,19 @@ int process_args(int argc, char *argv[]) {
 				domain_specified = true;
 
 				// setting the ip address with DNS
+
 				struct hostent *hostinfo;
 
 				if ((hostinfo = gethostbyname(argv[i+1])) == NULL) {
 
 					// error: could not find host name with DNS
+					perror("Error: could not find host name with DNS");
 					return -1;
 
 				} else {
 					
 					// setting the ip address to the first in the list
-					inet_pton(address_family, hostinfo->h_addr_list[0], &ip_address);
+					inet_pton(address_family, hostinfo->h_addr_list[0], &settings.server.sin_addr);
 				}
 
 				// skip past the DNS address since it was processed
@@ -149,6 +153,7 @@ int process_args(int argc, char *argv[]) {
 		} else {
 
 			// error: invalid argument
+			perror("Error: invalid argument");
 			return -1;
 		}
 	}
@@ -156,6 +161,7 @@ int process_args(int argc, char *argv[]) {
 	if (ip_specified && domain_specified) {
 
 		// error: cannot specify both ip and domain, either one or the other
+		fprintf(stderr, "Error: cannot specify both ip and domain, either one or the other");
 		return -1;	
 	}
 
@@ -164,7 +170,55 @@ int process_args(int argc, char *argv[]) {
 }
 
 int get_username() {
-    return -1;
+
+	FILE *username;
+
+	// running the whoami command
+	username = popen("whoami", "r");
+
+	if (username == NULL) {
+		return -1;
+	}
+
+	int fd = fileno(username);
+
+	int bytes_read = 0;
+
+	// reading the username from the whoami command
+	if ((bytes_read = read(fd, settings.username, sizeof(settings.username))) == -1){
+
+		perror("Error: could not get username");
+		pclose(username);
+		return -1;
+	}
+
+	// no username error
+	if (bytes_read == 0) {
+		perror("Error: username not found");
+		pclose(username);
+		return -1;
+	}
+
+	// invalid username error
+	if (settings.username == NULL || settings.username[0] == '\0'){
+		perror("Error: invalid username");
+		pclose(username);
+		return -1;
+	}
+
+	for (int i = 0; i < bytes_read; i++) {
+
+		// non-printable username error
+		if (!isprint(settings.username[i])){
+			perror("Error: invalid username");
+			pclose(username);
+			return -1;
+		}
+
+	}
+
+    pclose(username);
+    return 0;
 }
 
 void handle_signal(int signal) {
@@ -197,8 +251,10 @@ int main(int argc, char *argv[]) {
 	    // error: could not process arguments
 	    return -1;
     }
+
     // get username
 
+    int get_username_status = get_username();
     // create socket
 
     // connect to server
