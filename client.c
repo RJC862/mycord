@@ -12,7 +12,15 @@
 #include <ctype.h>
 #include <stdint.h>
 
-// typedef enum MessageType { ... } message_type_t;
+typedef enum MessageType { 
+	LOGIN;
+	LOGOUT;
+	MESSAGE_SEND;
+	MESSAGE_RECV=10;
+	DISCONNECT=12;
+	SYSTEM;
+} message_type_t;
+
 // typedef struct __attribute__((packed)) Message { ... } message_t;
 typedef struct Settings {
     struct sockaddr_in server;
@@ -253,15 +261,36 @@ int main(int argc, char *argv[]) {
     }
 
     // get username
-
     int get_username_status = get_username();
+
+    if (get_username_status == -1) {
+	    perror("Error: could not get username");
+	    return -1;
+    }
     // create socket
+
+    int sockfd = socket(settings.server.sin_family, SOCK_STREAM, 0);
+
+    if (sockfd == -1) {
+	    perror("Error: could not create socket");
+	    sockfd = -1;
+	    return -1;
+    }
 
     // connect to server
 
+    int connect_status = connect(sockfd, &settings.server.sin_addr.s_addr, sizeof(settings.server.sin_addr.s_addr));
+    if (connect_status == -1) {
+	    perror("Error: could not connect to address");
+	    sockfd = -1;
+	    return -1;
+    }
     // create and send login message
 
+    printf("Successfully connected. Welcome %s.\n", settings.username);
+
     // create and start receive messages thread
+    pthread_t *thread;
 
     // while some condition(s) are true
         // read a line from STDIN
