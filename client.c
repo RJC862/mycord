@@ -21,7 +21,13 @@ typedef enum MessageType {
 	SYSTEM;
 } message_type_t;
 
-// typedef struct __attribute__((packed)) Message { ... } message_t;
+typedef struct __attribute__((packed)) Message { 
+	unsigned int message_type;
+	unsigned int timestamp;
+	char username[32];
+	char message[1024];
+} message_t;
+
 typedef struct Settings {
     struct sockaddr_in server;
     bool quiet;
@@ -238,9 +244,23 @@ ssize_t perform_full_read(void *buf, size_t n) {
 }
 
 void* receive_messages_thread(void* arg) {
-    // while some condition(s) are true
+
+    int socket = *(int*)arg;
+    message_t message;
+
+    while(settings.running);
+ 
         // read message from the server (ensure no short reads)
-        // check the message type
+	ssize_t bytes_read = read(socket, &message.message, sizeof(message_t), 0);
+    	
+    	if (bytes_read <= 0) {
+		message.type = DISCONNECT;
+	}
+
+	switch(message.message){
+		case MESSAGE_RECV:
+			message.timestamp = //
+	}
             // for message types, print the message and do highlight parsing (if not quiet)
             // for system types, print the message in gray with username SYSTEM
             // for disconnect types, print the reason in red with username DISCONNECT and exit
@@ -287,11 +307,26 @@ int main(int argc, char *argv[]) {
     }
     // create and send login message
 
+    message_t login_msg;
+    
+    login_msg.message_type = LOGIN;
+    strncpy(login_msg.username, settings.username, sizeof(settings.username)-1);
+
+    if (login_msg.username == NULL) {
+	    perror("Error: no username found");
+	    return -1;
+    }
     printf("Successfully connected. Welcome %s.\n", settings.username);
 
     // create and start receive messages thread
-    pthread_t *thread;
+    settings.running = true;
+    pthread_t thread;
 
+    if((pthread_create(&thread, NULL, receive_messages_thread, sockfd)) != 0) {
+	    perror("Error: could not create receive thread");
+	    close(sockfd);
+	    return -1;
+    }
     // while some condition(s) are true
         // read a line from STDIN
         // do some error checking (handle EOF, EINTR, etc.)
