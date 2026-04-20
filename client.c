@@ -13,12 +13,12 @@
 #include <stdint.h>
 
 typedef enum MessageType { 
-	LOGIN;
-	LOGOUT;
-	MESSAGE_SEND;
-	MESSAGE_RECV=10;
-	DISCONNECT=12;
-	SYSTEM;
+	LOGIN,
+	LOGOUT,
+	MESSAGE_SEND,
+	MESSAGE_RECV=10,
+	DISCONNECT=12,
+	SYSTEM
 } message_type_t;
 
 typedef struct __attribute__((packed)) Message { 
@@ -77,7 +77,7 @@ int process_args(int argc, char *argv[]) {
 			print_help();
 			return 0;
 
-		} else if (strcmp(argv[i], "port") == 0) { // processing the port
+		} else if (strcmp(argv[i], "--port") == 0) { // processing the port
 
 			if (i + 1 < argc) {
 
@@ -194,37 +194,32 @@ int get_username() {
 		return -1;
 	}
 
-	int fd = fileno(username);
-
-	int bytes_read = 0;
-
 	// reading the username from the whoami command
-	if ((bytes_read = read(fd, settings.username, sizeof(settings.username))) == -1){
-
-		perror("Error: could not get username");
+	if (fgets(settings.username, sizeof(settings.username), username) == NULL){
+		perror("Error: could not get username from whoami");
 		pclose(username);
 		return -1;
 	}
 
-	// no username error
-	if (bytes_read == 0) {
-		perror("Error: username not found");
+	// empty username error
+	if (settings.username[0] == '\0'){
+		perror("Error: username is empty");
 		pclose(username);
 		return -1;
 	}
 
-	// invalid username error
-	if (settings.username == NULL || settings.username[0] == '\0'){
-		perror("Error: invalid username");
-		pclose(username);
-		return -1;
-	}
+	// checking that each character in the username is printable
+	
+	int length = strlen(settings.username);
 
-	for (int i = 0; i < bytes_read; i++) {
+	// removing the new line from the username and replacing it with a null terminator
+	settings.username[length-1] = '\0';
+
+	for (int i = 0; i < strlen(settings.username); i++) {
 
 		// non-printable username error
 		if (!isprint(settings.username[i])){
-			perror("Error: invalid username");
+			fprintf(stderr, "Error: nonprintable username");
 			pclose(username);
 			return -1;
 		}
@@ -232,6 +227,7 @@ int get_username() {
 	}
 
     pclose(username);
+    username = NULL;
     return 0;
 }
 
@@ -246,20 +242,22 @@ ssize_t perform_full_read(void *buf, size_t n) {
 void* receive_messages_thread(void* arg) {
 
     int socket = *(int*)arg;
-    message_t message;
+    message_t inbound_message;
+
 
     while(settings.running);
  
         // read message from the server (ensure no short reads)
-	ssize_t bytes_read = read(socket, &message.message, sizeof(message_t), 0);
+	ssize_t bytes_read = read(socket, &inbound_message.message, sizeof(message_t));
     	
-    	if (bytes_read <= 0) {
-		message.type = DISCONNECT;
+	if (bytes_read < sizeof(message_t)){
+		// handle error
 	}
 
-	switch(message.message){
+	switch(inbound_message.message_type){
 		case MESSAGE_RECV:
-			message.timestamp = //
+			printf("%s", inbound_message.message);
+			break;
 	}
             // for message types, print the message and do highlight parsing (if not quiet)
             // for system types, print the message in gray with username SYSTEM
@@ -289,44 +287,61 @@ int main(int argc, char *argv[]) {
     }
     // create socket
 
-    int sockfd = socket(settings.server.sin_family, SOCK_STREAM, 0);
+   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
     if (sockfd == -1) {
 	    perror("Error: could not create socket");
+	    close(sockfd);
 	    sockfd = -1;
 	    return -1;
     }
 
     // connect to server
 
-    int connect_status = connect(sockfd, &settings.server.sin_addr.s_addr, sizeof(settings.server.sin_addr.s_addr));
+    int connect_status = connect(sockfd, (struct sockaddr *)&settings.server, sizeof(settings.server.sin_addr.s_addr));
     if (connect_status == -1) {
 	    perror("Error: could not connect to address");
+	    close(sockfd);
 	    sockfd = -1;
 	    return -1;
     }
+
     // create and send login message
 
-    message_t login_msg;
+    message_t login_msg = {0};
     
+
+    // setting the message type 
     login_msg.message_type = LOGIN;
+
+    login_msg.username[sizeof(login_msg.username)-1] = '\0'; // null terminating the username manually just to make sure
+
+    // setting the username
     strncpy(login_msg.username, settings.username, sizeof(settings.username)-1);
 
-    if (login_msg.username == NULL) {
-	    perror("Error: no username found");
+    // sending the message to server
+    int send_login_message = write(sockfd, &login_msg, sizeof(login_msg));
+
+    if (send_login_message < sizeof(login_msg)) {
+	    perror("Error: could not send login message");
+	    close(sockfd);
+	    sockfd = -1;
 	    return -1;
     }
-    printf("Successfully connected. Welcome %s.\n", settings.username);
 
     // create and start receive messages thread
-    settings.running = true;
-    pthread_t thread;
+    pthread_t receive_thread;
 
-    if((pthread_create(&thread, NULL, receive_messages_thread, sockfd)) != 0) {
+    if((pthread_create(&receive_thread, NULL, receive_messages_thread, &sockfd)) != 0) {
 	    perror("Error: could not create receive thread");
 	    close(sockfd);
 	    return -1;
     }
+
+    settings.running = true;
+
+
+
     // while some condition(s) are true
         // read a line from STDIN
         // do some error checking (handle EOF, EINTR, etc.)
