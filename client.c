@@ -289,43 +289,55 @@ void* receive_messages_thread(void* arg) {
 			strftime(time_buffer, sizeof(time_buffer), "%Y-%m-%d %H:%M:%S", structured_time);
 
 			// printing the date and sender username
-			printf("[%s] %s: ", time_buffer, inbound_message.username);
+			fprintf(stdout, "[%s] %s: ", time_buffer, inbound_message.username);
 
-			// searching for mentions and highlighting
+			if (!settings.quiet){
 
-			char *mention_position;
-			char *current_position = inbound_message.message;
+				// searching for mentions and highlighting
 
-			// creating the mention format to search for
-			char mention_format[40];
-			snprintf(mention_format, sizeof(mention_format), "@%s", settings.username);
+				char *mention_position;
+				char *current_position = inbound_message.message;
+	
+				// creating the mention format to search for
+				char mention_format[40];
+				snprintf(mention_format, sizeof(mention_format), "@%s", settings.username);
 
-			// searching for mentions
-			while ((mention_position = strstr(current_position, mention_format)) != NULL){
+				// searching for mentions
+				while ((mention_position = strstr(current_position, mention_format)) != NULL){
 		
-				// print everything before the mention
-				fprintf(stdout, "%.*s ", (int) (mention_position - current_position), current_position);
+					// print everything before the mention
+					fprintf(stdout, "%.*s", (int) (mention_position - current_position), current_position);
 				
-				// the mention with red highlight and ascii bell
-				fprintf(stdout, "\a\033[31m%s\033[0m ", mention_format);
+					// the mention with red highlight and ascii bell
+					fprintf(stdout, "\a\033[31m%s\033[0m ", mention_format);
 
-				current_position = mention_position + strlen(mention_format);
+					current_position = mention_position + strlen(mention_format);
+				}
+
+				// printing the rest of the message
+				fprintf(stdout, "%s\n", current_position);
+			} else {
+				fprintf(stdout, "%s\n", inbound_message.message);
 			}
-
-			// printing the rest of the message
-			fprintf(stdout, "%s\n", current_position);
 			break;
 		}
 
 		case SYSTEM:{
-			fprintf(stdout, "\033[90m[SYSTEM] %s logged in\033[0m", settings.username);
+			fprintf(stdout, "\033[90m[SYSTEM] %s\033[0m", inbound_message.message);
 			break;
 		}
+
+		case DISCONNECT: {
+			fprintf(stdout, "\033[31m[DISCONNECT] %s\033[0m", inbound_message.message);
+			exit(0);
+		}
+
+		default: {
+			
+			fprintf(stderr, "Error: unknown message type");
+		 	break;
+		}	 
 	}
-            // for message types, print the message and do highlight parsing (if not quiet)
-            // for system types, print the message in gray with username SYSTEM
-            // for disconnect types, print the reason in red with username DISCONNECT and exit
-            // for anything else, print an error
 	fflush(stdout);
     }
 }
@@ -406,6 +418,31 @@ int main(int argc, char *argv[]) {
 
     settings.running = true;
  
+    char *input = NULL;
+    int len = 0;
+
+    while(settings.running) {
+	    printf("> ");
+	    fflush(stdout);
+
+	    // reading input from stdin
+	    ssize_t bytes_read = getline(&input, &len, stdin);
+
+	    if (bytes_read == -1){
+		    break;
+	    }
+
+	    // stripping the input string
+	    send_msg[bytes_read] = '\0';
+
+	    message_t send_message = {0};
+
+	    send_message.message_type = MESSAGE_SEND;
+	    strncpy(send_message.message, input, bytes_read)
+
+		    // finish
+	    break;
+    }
     // while some condition(s) are true
         // read a line from STDIN
         // do some error checking (handle EOF, EINTR, etc.)
