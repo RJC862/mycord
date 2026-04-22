@@ -67,6 +67,7 @@ int process_args(int argc, char *argv[]) {
 	bool ip_specified = false;
 	bool domain_specified = false;
 
+	settings.server.sin_family = AF_INET;
 	sa_family_t address_family = settings.server.sin_family;
 
 	// parsing arguments
@@ -75,7 +76,7 @@ int process_args(int argc, char *argv[]) {
 		if (strcmp(argv[i], "--help") == 0) { // processing help argument
 
 			print_help();
-			return 0;
+			exit(1);
 
 		} else if (strcmp(argv[i], "--port") == 0) { // processing the port
 
@@ -235,34 +236,98 @@ void handle_signal(int signal) {
     
 }
 
-ssize_t perform_full_read(void *buf, size_t n) {
-    return -1;
+ssize_t perform_full_read(int fd, void *buf, size_t n) {
+	size_t remaining = n;
+	char *curr_position = (char *) buf;
+
+	while (remaining > 0) {
+		
+		// attempting full read
+		ssize_t bytes_read = read(fd, curr_position, remaining);
+
+		if (bytes_read == 0) {
+			fprintf(stderr, "server closed connection");
+			return 0;
+		}
+
+		if (bytes_read < 0) {
+			perror("Error: could not read incoming message");
+			return -1;
+		}
+
+		// moving position to where the short read stopped
+		curr_position += bytes_read;
+		remaining -= bytes_read;
+	}
+
+	return n;
 }
 
 void* receive_messages_thread(void* arg) {
 
-    int socket = *(int*)arg;
+    int socket = (int)(intptr_t)arg;
     message_t inbound_message;
 
-
-    while(settings.running);
+    printf("receiving\n");
+    while(settings.running){
  
         // read message from the server (ensure no short reads)
-	ssize_t bytes_read = read(socket, &inbound_message.message, sizeof(message_t));
-    	
-	if (bytes_read < sizeof(message_t)){
-		// handle error
+	if (perform_full_read(socket, &inbound_message, sizeof(inbound_message)) <= 0) {
+		settings.running = false;
+		break;
 	}
 
 	switch(inbound_message.message_type){
-		case MESSAGE_RECV:
-			printf("%s", inbound_message.message);
+		case MESSAGE_RECV:{
+
+			// converting timestamp into a readable date format
+			char time_buffer[50];
+			time_t time = (time_t) inbound_message.timestamp;
+			struct tm *structured_time = localtime(&time);
+
+			// converting into date format and storing it
+			strftime(time_buffer, sizeof(time_buffer), "%Y-%m-%d %H:%M:%S", structured_time);
+
+			// printing the date and sender username
+			printf("[%s] %s: ", time_buffer, inbound_message.username);
+
+			// searching for mentions and highlighting
+
+			char *mention_position;
+			char *current_position = inbound_message.message;
+
+			// creating the mention format to search for
+			char mention_format[40];
+			snprintf(mention_format, sizeof(mention_format), "@%s", settings.username);
+
+			// searching for mentions
+			while ((mention_position = strstr(current_position, mention_format)) != NULL){
+		
+				// print everything before the mention
+				fprintf(stdout, "%.*s ", (int) (mention_position - current_position), current_position);
+				
+				// the mention with red highlight and ascii bell
+				fprintf(stdout, "\a\033[31m%s\033[0m ", mention_format);
+
+				current_position = mention_position + strlen(mention_format);
+			}
+
+			// printing the rest of the message
+			fprintf(stdout, "%s\n", current_position);
 			break;
+		}
+
+		case SYSTEM:{
+			fprintf(stdout, "\033[90m[SYSTEM] %s logged in\033[0m", settings.username);
+			break;
+		}
 	}
             // for message types, print the message and do highlight parsing (if not quiet)
             // for system types, print the message in gray with username SYSTEM
             // for disconnect types, print the reason in red with username DISCONNECT and exit
             // for anything else, print an error
+	fflush(stdout);
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -298,7 +363,7 @@ int main(int argc, char *argv[]) {
 
     // connect to server
 
-    int connect_status = connect(sockfd, (struct sockaddr *)&settings.server, sizeof(settings.server.sin_addr.s_addr));
+    int connect_status = connect(sockfd, (struct sockaddr *)&settings.server, sizeof(settings.server));
     if (connect_status == -1) {
 	    perror("Error: could not connect to address");
 	    close(sockfd);
@@ -306,6 +371,7 @@ int main(int argc, char *argv[]) {
 	    return -1;
     }
 
+    printf("Connected\n");
     // create and send login message
 
     message_t login_msg = {0};
@@ -332,16 +398,14 @@ int main(int argc, char *argv[]) {
     // create and start receive messages thread
     pthread_t receive_thread;
 
-    if((pthread_create(&receive_thread, NULL, receive_messages_thread, &sockfd)) != 0) {
+    if((pthread_create(&receive_thread, NULL, receive_messages_thread, (void *) (intptr_t) sockfd)) != 0) {
 	    perror("Error: could not create receive thread");
 	    close(sockfd);
 	    return -1;
     }
 
     settings.running = true;
-
-
-
+ 
     // while some condition(s) are true
         // read a line from STDIN
         // do some error checking (handle EOF, EINTR, etc.)
