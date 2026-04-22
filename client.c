@@ -246,12 +246,12 @@ ssize_t perform_full_read(int fd, void *buf, size_t n) {
 		ssize_t bytes_read = read(fd, curr_position, remaining);
 
 		if (bytes_read == 0) {
-			fprintf(stderr, "server closed connection");
+			fprintf(stderr, "server closed connection\n");
 			return 0;
 		}
 
 		if (bytes_read < 0) {
-			perror("Error: could not read incoming message");
+			perror("Error: could not read incoming message\n");
 			return -1;
 		}
 
@@ -259,7 +259,6 @@ ssize_t perform_full_read(int fd, void *buf, size_t n) {
 		curr_position += bytes_read;
 		remaining -= bytes_read;
 	}
-
 	return n;
 }
 
@@ -277,8 +276,11 @@ void* receive_messages_thread(void* arg) {
 		break;
 	}
 
+	inbound_message.message_type = ntohl(inbound_message.message_type);
+	inbound_message.timestamp = ntohl(inbound_message.timestamp);
+
 	switch(inbound_message.message_type){
-		case MESSAGE_RECV:{
+		case MESSAGE_RECV: {
 
 			// converting timestamp into a readable date format
 			char time_buffer[50];
@@ -320,29 +322,31 @@ void* receive_messages_thread(void* arg) {
 				fprintf(stdout, "%s\n", inbound_message.message);
 			}
 			break;
-		}
+				   }
 
 		case SYSTEM:{
-			fprintf(stdout, "\033[90m[SYSTEM] %s\033[0m", inbound_message.message);
+
+			fprintf(stdout, "\033[90m[SYSTEM] %s\033[0m\n", inbound_message.message);
 			break;
-		}
+			    }
 
 		case DISCONNECT: {
-			fprintf(stdout, "\033[31m[DISCONNECT] %s\033[0m", inbound_message.message);
+			fprintf(stdout, "\033[31m[DISCONNECT] %s\033[0m\n", inbound_message.message);
 			exit(0);
-		}
+				 }
 
 		default: {
-			
-			fprintf(stderr, "Error: unknown message type");
+			fprintf(stderr, "Error: unknown message type %u %d\n", inbound_message.message_type, sizeof(inbound_message));
 		 	break;
-		}	 
+			 }
 	}
 	fflush(stdout);
     }
 }
 
 int main(int argc, char *argv[]) {
+
+    message_type_t mtype;
     // setup sigactions (ill-advised to use signal for this project, use sigaction with default (0) flags instead)
 	
     
@@ -359,15 +363,15 @@ int main(int argc, char *argv[]) {
     int get_username_status = get_username();
 
     if (get_username_status == -1) {
-	    perror("Error: could not get username");
+	    perror("Error: could not get username\n");
 	    return -1;
     }
-    // create socket
 
+    // create socket
    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
     if (sockfd == -1) {
-	    perror("Error: could not create socket");
+	    perror("Error: could not create socket\n");
 	    close(sockfd);
 	    sockfd = -1;
 	    return -1;
@@ -377,7 +381,7 @@ int main(int argc, char *argv[]) {
 
     int connect_status = connect(sockfd, (struct sockaddr *)&settings.server, sizeof(settings.server));
     if (connect_status == -1) {
-	    perror("Error: could not connect to address");
+	    perror("Error: could not connect to address\n");
 	    close(sockfd);
 	    sockfd = -1;
 	    return -1;
@@ -386,11 +390,12 @@ int main(int argc, char *argv[]) {
     printf("Connected\n");
     // create and send login message
 
+    mtype = LOGIN;
     message_t login_msg = {0};
     
 
     // setting the message type 
-    login_msg.message_type = LOGIN;
+    login_msg.message_type = mtype;
 
     login_msg.username[sizeof(login_msg.username)-1] = '\0'; // null terminating the username manually just to make sure
 
@@ -401,7 +406,7 @@ int main(int argc, char *argv[]) {
     int send_login_message = write(sockfd, &login_msg, sizeof(login_msg));
 
     if (send_login_message < sizeof(login_msg)) {
-	    perror("Error: could not send login message");
+	    perror("Error: could not send login message\n");
 	    close(sockfd);
 	    sockfd = -1;
 	    return -1;
@@ -411,7 +416,7 @@ int main(int argc, char *argv[]) {
     pthread_t receive_thread;
 
     if((pthread_create(&receive_thread, NULL, receive_messages_thread, (void *) (intptr_t) sockfd)) != 0) {
-	    perror("Error: could not create receive thread");
+	    perror("Error: could not create receive thread\n");
 	    close(sockfd);
 	    return -1;
     }
@@ -419,29 +424,66 @@ int main(int argc, char *argv[]) {
     settings.running = true;
  
     char *input = NULL;
-    int len = 0;
+    size_t len = 0;
+
 
     while(settings.running) {
-	    printf("> ");
-	    fflush(stdout);
 
 	    // reading input from stdin
 	    ssize_t bytes_read = getline(&input, &len, stdin);
 
 	    if (bytes_read == -1){
-		    break;
+		    perror("Error: could not read message\n");
+		    continue;
 	    }
 
-	    // stripping the input string
-	    send_msg[bytes_read] = '\0';
+	    if (strlen(input) == 0){
+		    fprintf(stderr, "Error: empty message\n");
+		    continue;
+	    }
 
+	    if (bytes_read > 1023) {
+		    fprintf(stderr, "Error: Message too long (1 - 1023 chars)\n");
+		    continue;
+	    }
+
+	    // stripping newline character
+	    
+	    if (bytes_read > 0 && input[bytes_read-1] == '\n') {
+		    input[bytes_read-1] = '\0';
+		    bytes_read--;
+	    }
+
+	    int printable = 1;
+
+	    for (int i = 0; i < bytes_read; i++) {
+		    if (!isprint(input[i])){
+			    printable = 0;
+			    break;
+		    }
+	    }
+
+	    if (printable == 0){
+		    fprintf(stderr, "Message cannot contain non-printable ASCII characters\n");
+		    continue;
+	    }
+
+
+	    // initialize a struct to hold the message to send
 	    message_t send_message = {0};
 
-	    send_message.message_type = MESSAGE_SEND;
-	    strncpy(send_message.message, input, bytes_read)
+	    // setting the message type
+	    send_message.message_type = htonl(MESSAGE_SEND);
 
-		    // finish
-	    break;
+	    // copying the message to the message struct
+	    strncpy(send_message.message, input, bytes_read);
+	
+	    // sending the message to server
+	    if(write(sockfd, &send_message, sizeof(send_message)) == -1) {
+		    perror("Error: could not send message\n");
+		    continue;
+	    }
+
     }
     // while some condition(s) are true
         // read a line from STDIN
