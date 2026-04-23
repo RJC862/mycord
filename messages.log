@@ -140,3 +140,11 @@
 127.0.0.1|0|1776899196|rjc6651|rjc6651 logged in
 127.0.0.1|12|1776899219|rjc6651|Username already connected
 127.0.0.1|12|1776899258|rjc6651|Username already connected
+127.0.0.1|12|1776899531|rjc6651|Messages must not be empty
+127.0.0.1|0|1776899610|rjc6651|rjc6651 logged in
+127.0.0.1|12|1776899612|rjc6651|Messages must not be empty
+127.0.0.1|0|1776899683|rjc6651|rjc6651 logged in
+127.0.0.1|12|1776899704|rjc6651|Failed to receive message
+127.0.0.1|0|1776899708|rjc6651|rjc6651 logged in
+127.0.0.1|2|1776899711|rjc6651|hello
+127.0.0.1|12|1776899717|rjc6651|Failed to receive message

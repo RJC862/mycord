@@ -76,7 +76,7 @@ int process_args(int argc, char *argv[]) {
 		if (strcmp(argv[i], "--help") == 0) { // processing help argument
 
 			print_help();
-			exit(1);
+			exit(0);
 
 		} else if (strcmp(argv[i], "--port") == 0) { // processing the port
 
@@ -88,7 +88,7 @@ int process_args(int argc, char *argv[]) {
 				unsigned long port_number = strtoul(argv[i+1], NULL, 10);
 
 				if (port_number > 65535) {
-					perror("Error: invalid port number");
+					fprintf(stderr, "Error: invalid port number\n");
 					return -1;
 				}
 
@@ -100,22 +100,22 @@ int process_args(int argc, char *argv[]) {
 
 			} else {
 
-				perror("Missing port number");
+				fprintf(stderr, "Missing port number\n");
 				return -1;
 
 			}
-		} else if (strcmp(argv[i], "ip") == 0) { // processing ip
+		} else if (strcmp(argv[i], "--ip") == 0) { // processing ip
 			
 			ip_specified = true;
 
 			if (i + 1 < argc){
 
 				// setting the IP
-				int inet_pton_status = inet_pton(address_family, argv[i+1], &settings.server.sin_addr); 
+				int inet_pton_status = inet_pton(AF_INET, argv[i+1], &settings.server.sin_addr); 
 				
 				if (inet_pton_status != 1) {
 					
-					perror("Error: invalid IP address");
+					fprintf(stderr,"Error: invalid IP address\n");
 					return -1;
 
 				} 
@@ -143,7 +143,7 @@ int process_args(int argc, char *argv[]) {
 				if ((hostinfo = gethostbyname(argv[i+1])) == NULL) {
 
 					// error: could not find host name with DNS
-					perror("Error: could not find host name with DNS");
+					fprintf(stderr,"Error: could not find host name with DNS\n");
 					return -1;
 
 				} else {
@@ -168,7 +168,7 @@ int process_args(int argc, char *argv[]) {
 		} else {
 
 			// error: invalid argument
-			perror("Error: invalid argument");
+			fprintf(stderr, "Error: invalid argument\n");
 			return -1;
 		}
 	}
@@ -176,7 +176,7 @@ int process_args(int argc, char *argv[]) {
 	if (ip_specified && domain_specified) {
 
 		// error: cannot specify both ip and domain, either one or the other
-		fprintf(stderr, "Error: cannot specify both ip and domain, either one or the other");
+		fprintf(stderr, "Error: cannot specify both ip and domain, either one or the other\n");
 		return -1;	
 	}
 
@@ -197,14 +197,14 @@ int get_username() {
 
 	// reading the username from the whoami command
 	if (fgets(settings.username, sizeof(settings.username), username) == NULL){
-		perror("Error: could not get username from whoami");
+		perror("Error: could not get username from whoami\n");
 		pclose(username);
 		return -1;
 	}
 
 	// empty username error
 	if (settings.username[0] == '\0'){
-		perror("Error: username is empty");
+		perror("Error: username is empty\n");
 		pclose(username);
 		return -1;
 	}
@@ -220,7 +220,7 @@ int get_username() {
 
 		// non-printable username error
 		if (!isprint(settings.username[i])){
-			fprintf(stderr, "Error: nonprintable username");
+			fprintf(stderr, "Error: nonprintable username\n");
 			pclose(username);
 			return -1;
 		}
@@ -345,8 +345,6 @@ void* receive_messages_thread(void* arg) {
 }
 
 int main(int argc, char *argv[]) {
-
-    message_type_t mtype;
     // setup sigactions (ill-advised to use signal for this project, use sigaction with default (0) flags instead)
 	
     
@@ -390,12 +388,11 @@ int main(int argc, char *argv[]) {
     printf("Connected\n");
     // create and send login message
 
-    mtype = LOGIN;
     message_t login_msg = {0};
     
 
     // setting the message type 
-    login_msg.message_type = mtype;
+    login_msg.message_type = LOGIN;
 
     login_msg.username[sizeof(login_msg.username)-1] = '\0'; // null terminating the username manually just to make sure
 
@@ -437,11 +434,6 @@ int main(int argc, char *argv[]) {
 		    continue;
 	    }
 
-	    if (strlen(input) == 0){
-		    fprintf(stderr, "Error: empty message\n");
-		    continue;
-	    }
-
 	    if (bytes_read > 1023) {
 		    fprintf(stderr, "Error: Message too long (1 - 1023 chars)\n");
 		    continue;
@@ -454,6 +446,11 @@ int main(int argc, char *argv[]) {
 		    bytes_read--;
 	    }
 
+	    if (input[0] == '\0') {
+		    fprintf(stderr, "Error: empty message\n");
+		    continue;
+	    }
+	    // checking that the message does not contain non printable ascii
 	    int printable = 1;
 
 	    for (int i = 0; i < bytes_read; i++) {
