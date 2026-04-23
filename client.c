@@ -111,18 +111,27 @@ int process_args(int argc, char *argv[]) {
 
 			if (i + 1 < argc){
 
-				// setting the IP
-				int inet_pton_status = inet_pton(AF_INET, argv[i+1], &settings.server.sin_addr); 
+
+				// checking that the next argument starts with a digit so an error is not raised if the user chains commands
+				if (!isdigit(argv[i+1][0])){
+
+					inet_pton(AF_INET, "127.0.0.1", &settings.server.sin_addr);
 				
-				if (inet_pton_status != 1) {
+				} else {
+
+					// setting the IP
+					int inet_pton_status = inet_pton(AF_INET, argv[i+1], &settings.server.sin_addr); 
+				
+					if (inet_pton_status != 1) {
 					
-					fprintf(stderr,"Error: invalid IP address\n");
-					return -1;
+						fprintf(stderr,"Error: invalid IP address\n");
+						return -1;
 
-				} 
+					} 
 
-				// skipping past the ip address since it was processed
-				i++;
+					// skipping past the ip address since it was processed
+					i++;
+				}
 
 			} else {
 
@@ -233,10 +242,6 @@ int get_username() {
     return 0;
 }
 
-void handle_signal(int signal) {
-    
-}
-
 ssize_t perform_full_read(int fd, void *buf, size_t n) {
 	size_t remaining = n;
 	char *curr_position = (char *) buf;
@@ -311,7 +316,7 @@ void* receive_messages_thread(void* arg) {
 					fprintf(stdout, "%.*s", (int) (mention_position - current_position), current_position);
 				
 					// the mention with red highlight and ascii bell
-					fprintf(stdout, "\a\033[31m%s\033[0m ", mention_format);
+					fprintf(stdout, "\a\033[31m%s\033[0m", mention_format);
 
 					current_position = mention_position + strlen(mention_format);
 				}
@@ -344,6 +349,11 @@ void* receive_messages_thread(void* arg) {
     }
 }
 
+void sig_int_term_handler(int signum) {
+	signal_status = 1;
+	return;
+}
+
 int main(int argc, char *argv[]) {
     // setup sigactions (ill-advised to use signal for this project, use sigaction with default (0) flags instead)
     
@@ -358,12 +368,8 @@ int main(int argc, char *argv[]) {
 
     // SIGINT and SIGTERM handling
     act.sa_handler = sig_int_term_handler;
-    sigaction(SIGINT, act, NULL);
-    sigaction(SIGTERM, act, NULL);
-
-    // EOF handling
-    act.sa_handler = eof_handler;
-    sigaction(EOF, act, NULL);
+    sigaction(SIGINT, &act, NULL);
+    sigaction(SIGTERM, &act, NULL);
 
     // parse arguments
 
@@ -442,9 +448,10 @@ int main(int argc, char *argv[]) {
 	    // reading input from stdin
 	    ssize_t bytes_read = getline(&input, &len, stdin);
 
-	    if (bytes_read == -1){
-		    perror("Error: could not read message\n");
-		    continue;
+	    // logout and cleanup on any signal
+	    if (signal_status != 0 || bytes_read == -1) {
+		settings.running = false;
+		break;
 	    }
 
 	    if (bytes_read > 1023) {
@@ -495,12 +502,22 @@ int main(int argc, char *argv[]) {
 	    }
 
     }
-    // while some condition(s) are true
-        // read a line from STDIN
-        // do some error checking (handle EOF, EINTR, etc.)
-        // send message to the server
-    
-    // wait for the thread / clean up
 
-    // cleanup and return
+    // logging out
+    message_t logout = {0};
+
+    logout.message_type = htonl(LOGOUT);
+
+    // sending the logout message
+    write(sockfd, &logout, sizeof(logout));
+    
+    // waiting for thread
+    pthread_join(receive_thread, NULL);
+
+    // cleaning up
+    free(input);
+    input = NULL;
+    close(sockfd);
+    sockfd = -1;
+    exit(0);
 }
