@@ -281,6 +281,7 @@ void* receive_messages_thread(void* arg) {
 		break;
 	}
 
+	// converting integer types into client byte order
 	inbound_message.message_type = ntohl(inbound_message.message_type);
 	inbound_message.timestamp = ntohl(inbound_message.timestamp);
 
@@ -330,25 +331,33 @@ void* receive_messages_thread(void* arg) {
 				   }
 
 		case SYSTEM:{
-
 			fprintf(stdout, "\033[90m[SYSTEM] %s\033[0m\n", inbound_message.message);
 			break;
 			    }
 
 		case DISCONNECT: {
+
 			fprintf(stdout, "\033[31m[DISCONNECT] %s\033[0m\n", inbound_message.message);
-			exit(0);
+			
+			// End connection
+			settings.running = false;
+			return 0;
+
 				 }
 
 		default: {
+			
+			// unknown message types
 			fprintf(stderr, "Error: unknown message type %u %d\n", inbound_message.message_type, sizeof(inbound_message));
 		 	break;
 			 }
 	}
+	// print everything left over
 	fflush(stdout);
     }
 }
 
+// handler for SIGINT/SIGTERM
 void sig_int_term_handler(int signum) {
 	signal_status = 1;
 	return;
@@ -372,11 +381,10 @@ int main(int argc, char *argv[]) {
     sigaction(SIGTERM, &act, NULL);
 
     // parse arguments
-
     int process_args_status = process_args(argc, argv);
 
     if (process_args_status == -1) {
-	    // error: could not process arguments
+	    fprintf(stderr, "Error: could not process arguments\n");
 	    return -1;
     }
 
@@ -411,7 +419,7 @@ int main(int argc, char *argv[]) {
     // create and send login message
     message_t login_msg = {0};
     
-    // setting the message type 
+    // setting the login message type 
     login_msg.message_type = htonl(LOGIN);
 
     login_msg.username[sizeof(login_msg.username)-1] = '\0'; // null terminating the username manually just to make sure
@@ -466,6 +474,7 @@ int main(int argc, char *argv[]) {
 		    bytes_read--;
 	    }
 
+	    // checking for an empty message
 	    if (input[0] == '\0') {
 		    fprintf(stderr, "Error: empty message\n");
 		    continue;
