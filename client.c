@@ -41,6 +41,8 @@ static char* COLOR_GRAY = "\033[90m";
 static char* COLOR_RESET = "\033[0m";
 static settings_t settings = {0};
 
+volatile sig_atomic_t signal_status = 0;
+
 void print_help(void){
 	// prints the help menu
 	
@@ -68,7 +70,6 @@ int process_args(int argc, char *argv[]) {
 	bool domain_specified = false;
 
 	settings.server.sin_family = AF_INET;
-	sa_family_t address_family = settings.server.sin_family;
 
 	// parsing arguments
 	for (int i = 1; i < argc; i++) {
@@ -126,7 +127,7 @@ int process_args(int argc, char *argv[]) {
 			} else {
 
 				// setting the default ip address
-				inet_pton(address_family, "127.0.0.1", &settings.server.sin_addr);
+				inet_pton(AF_INET, "127.0.0.1", &settings.server.sin_addr);
 
 			}
 
@@ -149,7 +150,7 @@ int process_args(int argc, char *argv[]) {
 				} else {
 					
 					// setting the ip address to the first in the list
-					inet_pton(address_family, hostinfo->h_addr_list[0], &settings.server.sin_addr);
+					inet_pton(AF_INET, hostinfo->h_addr_list[0], &settings.server.sin_addr);
 				}
 
 				// skip past the DNS address since it was processed
@@ -267,7 +268,6 @@ void* receive_messages_thread(void* arg) {
     int socket = (int)(intptr_t)arg;
     message_t inbound_message;
 
-    printf("receiving\n");
     while(settings.running){
  
         // read message from the server (ensure no short reads)
@@ -346,8 +346,25 @@ void* receive_messages_thread(void* arg) {
 
 int main(int argc, char *argv[]) {
     // setup sigactions (ill-advised to use signal for this project, use sigaction with default (0) flags instead)
-	
     
+    // initializing sigaction struct
+    struct sigaction act;
+
+    // clearing struct fields to disable masking and flags
+    sigemptyset(&act.sa_mask);
+    act.sa_flags = 0;
+    
+    // assigning handler to signals
+
+    // SIGINT and SIGTERM handling
+    act.sa_handler = sig_int_term_handler;
+    sigaction(SIGINT, act, NULL);
+    sigaction(SIGTERM, act, NULL);
+
+    // EOF handling
+    act.sa_handler = eof_handler;
+    sigaction(EOF, act, NULL);
+
     // parse arguments
 
     int process_args_status = process_args(argc, argv);
@@ -385,14 +402,11 @@ int main(int argc, char *argv[]) {
 	    return -1;
     }
 
-    printf("Connected\n");
     // create and send login message
-
     message_t login_msg = {0};
     
-
     // setting the message type 
-    login_msg.message_type = LOGIN;
+    login_msg.message_type = htonl(LOGIN);
 
     login_msg.username[sizeof(login_msg.username)-1] = '\0'; // null terminating the username manually just to make sure
 
@@ -422,7 +436,6 @@ int main(int argc, char *argv[]) {
  
     char *input = NULL;
     size_t len = 0;
-
 
     while(settings.running) {
 
