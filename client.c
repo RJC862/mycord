@@ -43,10 +43,8 @@ static settings_t settings = {0};
 
 volatile sig_atomic_t signal_status = 0;
 
-void print_help(void){
-	// prints the help menu
-	
-	printf("usage: ./client [-h] [--port PORT] [--ip IP] [--domain DOMAIN] [--quiet]\n\n"
+static const char HELP_MSG[] = 	
+		"usage: ./client [-h] [--port PORT] [--ip IP] [--domain DOMAIN] [--quiet]\n\n"
 
 		"mycord client\n\n"
 
@@ -60,7 +58,12 @@ void print_help(void){
 		"examples:\n"
   		"/client --help (prints the above message)\n"
   		"/client --port 1738 (connects to a mycord server at 127.0.0.1:1738)\n"
-  		"/client --domain example.com (connects to a mycord server at example.com:8080)\n");
+  		"/client --domain example.com (connects to a mycord server at example.com:8080)\n";
+
+void print_help(void){
+	// prints help menu
+	
+	fputs(HELP_MSG, stdout);
 
 }
 
