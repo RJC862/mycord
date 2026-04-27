@@ -73,6 +73,8 @@ int process_args(int argc, char *argv[]) {
 	bool domain_specified = false;
 
 	settings.server.sin_family = AF_INET;
+	settings.server.sin_port = htons(8080);
+	inet_pton(AF_INET, "127.0.0.1", &settings.server.sin_addr);
 
 	// parsing arguments
 	for (int i = 1; i < argc; i++) {
@@ -88,10 +90,11 @@ int process_args(int argc, char *argv[]) {
 
 				// setting the port number
 
-				// casting the port into an integer type so it can be cast into an unsigned short
-				unsigned long port_number = strtoul(argv[i+1], NULL, 10);
+				char *endptr;
 
-				if (port_number > 65535) {
+				unsigned long port_number = strtoul(argv[i+1], &endptr, 10);
+
+				if (*endptr != '\0' || port_number > 65535) {
 					fprintf(stderr, "Error: invalid port number\n");
 					return -1;
 				}
@@ -101,45 +104,32 @@ int process_args(int argc, char *argv[]) {
 
 				// skipping past the port number since it was processed
 				i++;
-
 			} else {
-
-				fprintf(stderr, "Missing port number\n");
+				fprintf(stderr, "Error: missing port number\n");
 				return -1;
-
 			}
 		} else if (strcmp(argv[i], "--ip") == 0) { // processing ip
-			
+		
+			if (domain_specified) {
+				fprintf(stderr, "Error: cannot specify both ip and domain, either one or the other\n");
+				return -1;
+			}	
 			ip_specified = true;
 
 			if (i + 1 < argc){
 
-
-				// checking that the next argument starts with a digit so an error is not raised if the user chains commands
-				if (!isdigit(argv[i+1][0])){
-
-					inet_pton(AF_INET, "127.0.0.1", &settings.server.sin_addr);
+				// setting the IP
+				int inet_pton_status = inet_pton(AF_INET, argv[i+1], &settings.server.sin_addr); 
 				
-				} else {
-
-					// setting the IP
-					int inet_pton_status = inet_pton(AF_INET, argv[i+1], &settings.server.sin_addr); 
-				
-					if (inet_pton_status != 1) {
+				if (inet_pton_status != 1) {
 					
-						fprintf(stderr,"Error: invalid IP address\n");
-						return -1;
+					fprintf(stderr,"Error: invalid IP address\n");
+					return -1;
 
-					} 
+				} 
 
-					// skipping past the ip address since it was processed
-					i++;
-				}
-
-			} else {
-
-				// setting the default ip address
-				inet_pton(AF_INET, "127.0.0.1", &settings.server.sin_addr);
+				// skipping past the ip address since it was processed
+				i++;
 
 			}
 
@@ -147,30 +137,31 @@ int process_args(int argc, char *argv[]) {
 
 			if (i + 1 < argc) {
 
+				if (ip_specified) {
+					fprintf(stderr, "Error: cannot specify both ip and domain, either one or the other\n");
+					return -1;
+				}
+
 				domain_specified = true;
 
 				// setting the ip address with DNS
 
-				struct hostent *hostinfo;
+				struct addrinfo info = {0}, *res;
+				info.ai_family = AF_INET;
+				info.ai_socktype = SOCK_STREAM;
 
-				if ((hostinfo = gethostbyname(argv[i+1])) == NULL) {
-
-					// error: could not find host name with DNS
+				if (getaddrinfo(argv[i+1], NULL, &info, &res) != 0) {
 					fprintf(stderr,"Error: could not find host name with DNS\n");
 					return -1;
 
-				} else {
-					
-					// setting the ip address to the first in the list
-					inet_pton(AF_INET, hostinfo->h_addr_list[0], &settings.server.sin_addr);
 				}
-
+				memcpy(&settings.server.sin_addr,  
+						&((struct sockaddr_in *) res->ai_addr) ->sin_addr, sizeof(struct in_addr));
+				
+				freeaddrinfo(res);
+				
 				// skip past the DNS address since it was processed
 				i++;
-			} else {
-				
-				// do nothing if there is no domain specified
-				continue;
 			}
 
 		} else if (strcmp(argv[i], "--quiet") == 0 ) {
@@ -184,13 +175,6 @@ int process_args(int argc, char *argv[]) {
 			fprintf(stderr, "Error: invalid argument\n");
 			return -1;
 		}
-	}
-
-	if (ip_specified && domain_specified) {
-
-		// error: cannot specify both ip and domain, either one or the other
-		fprintf(stderr, "Error: cannot specify both ip and domain, either one or the other\n");
-		return -1;	
 	}
 
     // successful argument processing
