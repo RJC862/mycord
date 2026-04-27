@@ -272,7 +272,7 @@ ssize_t perform_full_read(int fd, void *buf, size_t n) {
 		}
 
 		if (bytes_read < 0) {
-			perror("Error: could not read incoming message");
+			perror("Error: could not read incoming message\n");
 			return -1;
 		}
 
@@ -492,14 +492,14 @@ int main(int argc, char *argv[]) {
 
 	    if (bytes_read > 1023) {
 		    fprintf(stderr, "Error: Message too long (1 - 1023 chars)\n");
-		    continue;
+		    
 	    }
 
 	    // checking for an empty message
 	    
 	    if (input[0] == '\0') {
 		    fprintf(stderr, "Error: empty message\n");
-		    continue;
+		    
 	    }
 
 	    // checking that the message does not contain non printable ascii
@@ -514,7 +514,7 @@ int main(int argc, char *argv[]) {
 
 	    if (printable == 0){
 		    fprintf(stderr, "Error: Message cannot contain non-printable ASCII characters\n");
-		    continue;
+		    
 	    }
 
 
@@ -531,7 +531,7 @@ int main(int argc, char *argv[]) {
 	    // sending the message to server
 	    if(perform_full_write(sockfd, &send_message, sizeof(send_message)) == -1) {
 		    perror("Error: could not send message\n");
-		    continue;
+		    
 	    }
 
     }
