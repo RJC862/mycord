@@ -31,6 +31,7 @@ typedef struct __attribute__((packed)) Message {
 typedef struct Settings {
     struct sockaddr_in server;
     bool quiet;
+    bool disconnected;
     int socket_fd;
     bool running;
     char username[32];
@@ -229,6 +230,30 @@ int get_username() {
     return 0;
 }
 
+ssize_t perform_full_write(int fd, void *buf, size_t n) {
+	size_t remaining = n;
+	char *curr_position = (char *)buf;
+
+	while (remaining > 0) {
+
+		// attempting full write
+		ssize_t bytes_written = write(fd, curr_position, remaining);
+		
+		if (bytes_written < 0) {
+			perror("Error: could not send message\n");
+			return -1;
+		}
+
+		// moving position to where the short write stopped
+		curr_position += bytes_written;
+		remaining -= bytes_written;
+
+	}
+
+	return n;
+}
+
+
 ssize_t perform_full_read(int fd, void *buf, size_t n) {
 	size_t remaining = n;
 	char *curr_position = (char *) buf;
@@ -278,10 +303,11 @@ void* receive_messages_thread(void* arg) {
 			// converting timestamp into a readable date format
 			char time_buffer[50];
 			time_t time = (time_t) inbound_message.timestamp;
-			struct tm *structured_time = localtime(&time);
+			struct tm structured_time;
+			localtime_r(&time, &structured_time);
 
 			// converting into date format and storing it
-			strftime(time_buffer, sizeof(time_buffer), "%Y-%m-%d %H:%M:%S", structured_time);
+			strftime(time_buffer, sizeof(time_buffer), "%Y-%m-%d %H:%M:%S", &structured_time);
 
 			// printing the date and sender username
 			fprintf(stdout, "[%s] %s: ", time_buffer, inbound_message.username);
@@ -294,7 +320,8 @@ void* receive_messages_thread(void* arg) {
 				char *current_position = inbound_message.message;
 	
 				// creating the mention format to search for
-				char mention_format[40];
+				char mention_format[sizeof(settings.username) + 1]; // @ + username + \0
+
 				snprintf(mention_format, sizeof(mention_format), "@%s", settings.username);
 
 				// searching for mentions
@@ -326,6 +353,8 @@ void* receive_messages_thread(void* arg) {
 
 			fprintf(stdout, "\033[31m[DISCONNECT] %s\033[0m\n", inbound_message.message);
 			
+			settings.disconnected = true;
+
 			// End connection
 			settings.running = false;
 			return 0;
@@ -338,9 +367,8 @@ void* receive_messages_thread(void* arg) {
 			fprintf(stderr, "Error: unknown message type %u %d\n", inbound_message.message_type, sizeof(inbound_message));
 		 	break;
 			 }
+		fflush(stdout);
 	}
-	// print everything left over
-	fflush(stdout);
     }
 }
 
@@ -427,13 +455,14 @@ int main(int argc, char *argv[]) {
     // create and start receive messages thread
     pthread_t receive_thread;
 
+    settings.running = true;
+
     if((pthread_create(&receive_thread, NULL, receive_messages_thread, (void *) (intptr_t) sockfd)) != 0) {
 	    perror("Error: could not create receive thread\n");
 	    close(sockfd);
+	    settings.running = false;
 	    return -1;
     }
-
-    settings.running = true;
  
     char *input = NULL;
     size_t len = 0;
@@ -444,9 +473,16 @@ int main(int argc, char *argv[]) {
 	    ssize_t bytes_read = getline(&input, &len, stdin);
 
 	    // logout and cleanup on any signal
-	    if (signal_status != 0 || bytes_read == -1) {
+	    if (signal_status != 0) {
 		settings.running = false;
 		break;
+	    }
+
+
+	    // stripping newline character
+	    if (bytes_read > 0 && input[bytes_read-1] == '\n') {
+		    input[bytes_read-1] = '\0';
+		    bytes_read--;
 	    }
 
 	    if (bytes_read > 1023) {
@@ -454,18 +490,13 @@ int main(int argc, char *argv[]) {
 		    continue;
 	    }
 
-	    // stripping newline character
-	    
-	    if (bytes_read > 0 && input[bytes_read-1] == '\n') {
-		    input[bytes_read-1] = '\0';
-		    bytes_read--;
-	    }
-
 	    // checking for an empty message
+	    
 	    if (input[0] == '\0') {
 		    fprintf(stderr, "Error: empty message\n");
 		    continue;
 	    }
+
 	    // checking that the message does not contain non printable ascii
 	    int printable = 1;
 
@@ -489,10 +520,11 @@ int main(int argc, char *argv[]) {
 	    send_message.message_type = htonl(MESSAGE_SEND);
 
 	    // copying the message to the message struct
-	    strncpy(send_message.message, input, bytes_read);
+	    strncpy(send_message.message, input, sizeof(send_message.message)-1);
+	    send_message.message[sizeof(send_message.message)-1] = '\0';
 	
 	    // sending the message to server
-	    if(write(sockfd, &send_message, sizeof(send_message)) == -1) {
+	    if(perform_full_write(sockfd, &send_message, sizeof(send_message)) == -1) {
 		    perror("Error: could not send message\n");
 		    continue;
 	    }
@@ -505,15 +537,18 @@ int main(int argc, char *argv[]) {
     logout.message_type = htonl(LOGOUT);
 
     // sending the logout message
-    write(sockfd, &logout, sizeof(logout));
+    if (!settings.disconnected) {
+   	 write(sockfd, &logout, sizeof(logout));
+    }
     
+    close(sockfd);
+    sockfd = -1;
+
     // waiting for thread
     pthread_join(receive_thread, NULL);
 
     // cleaning up
     free(input);
     input = NULL;
-    close(sockfd);
-    sockfd = -1;
-    exit(0);
+    return 0;
 }
