@@ -285,6 +285,9 @@ void* receive_messages_thread(void* arg) {
     int socket = (int)(intptr_t)arg;
     message_t inbound_message;
 
+    // immediate outputs
+    setbuf(stdout, NULL);
+
     while(settings.running){
  
         // read message from the server (ensure no short reads)
@@ -331,7 +334,7 @@ void* receive_messages_thread(void* arg) {
 					fprintf(stdout, "%.*s", (int) (mention_position - current_position), current_position);
 				
 					// the mention with red highlight and ascii bell
-					fprintf(stdout, "\a\033[31m%s\033[0m", mention_format);
+					fprintf(stdout, "%s%s%s", COLOR_RED, mention_format, COLOR_RESET);
 
 					current_position = mention_position + strlen(mention_format);
 				}
@@ -345,13 +348,13 @@ void* receive_messages_thread(void* arg) {
 				   }
 
 		case SYSTEM:{
-			fprintf(stdout, "\033[90m[SYSTEM] %s\033[0m\n", inbound_message.message);
+			fprintf(stdout, "%s[SYSTEM] %s%s\n", COLOR_GRAY, inbound_message.message, COLOR_RESET);
 			break;
 			    }
 
 		case DISCONNECT: {
 
-			fprintf(stdout, "\033[31m[DISCONNECT] %s\033[0m\n", inbound_message.message);
+			fprintf(stdout, "%s[DISCONNECT] %s%s\n", COLOR_RED, inbound_message.message, COLOR_RESET);
 			
 			settings.disconnected = true;
 
@@ -364,12 +367,12 @@ void* receive_messages_thread(void* arg) {
 		default: {
 			
 			// unknown message types
-			fprintf(stderr, "Error: unknown message type %u %d\n", inbound_message.message_type, sizeof(inbound_message));
+			fprintf(stderr, "Error: unknown message type %u %zu\n", inbound_message.message_type, sizeof(inbound_message));
 		 	break;
 			 }
-		fflush(stdout);
 	}
     }
+    return NULL;
 }
 
 // handler for SIGINT/SIGTERM
@@ -443,9 +446,8 @@ int main(int argc, char *argv[]) {
     strncpy(login_msg.username, settings.username, sizeof(settings.username)-1);
 
     // sending the message to server
-    int send_login_message = write(sockfd, &login_msg, sizeof(login_msg));
 
-    if (send_login_message < sizeof(login_msg)) {
+    if (perform_full_write(sockfd, &login_msg, sizeof(login_msg)) == -1) {
 	    perror("Error: could not send login message\n");
 	    close(sockfd);
 	    sockfd = -1;
@@ -473,7 +475,7 @@ int main(int argc, char *argv[]) {
 	    ssize_t bytes_read = getline(&input, &len, stdin);
 
 	    // logout and cleanup on any signal
-	    if (signal_status != 0) {
+	    if (signal_status != 0 || bytes_read == -1) {
 		settings.running = false;
 		break;
 	    }
@@ -508,7 +510,7 @@ int main(int argc, char *argv[]) {
 	    }
 
 	    if (printable == 0){
-		    fprintf(stderr, "Message cannot contain non-printable ASCII characters\n");
+		    fprintf(stderr, "Error: Message cannot contain non-printable ASCII characters\n");
 		    continue;
 	    }
 
@@ -538,7 +540,7 @@ int main(int argc, char *argv[]) {
 
     // sending the logout message
     if (!settings.disconnected) {
-   	 write(sockfd, &logout, sizeof(logout));
+   	 perform_full_write(sockfd, &logout, sizeof(logout));
     }
     
     close(sockfd);
