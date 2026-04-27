@@ -61,13 +61,6 @@ static const char HELP_MSG[] =
   		"/client --port 1738 (connects to a mycord server at 127.0.0.1:1738)\n"
   		"/client --domain example.com (connects to a mycord server at example.com:8080)\n";
 
-void print_help(void){
-	// prints help menu
-	
-	fputs(HELP_MSG, stdout);
-
-}
-
 int process_args(int argc, char *argv[]) {
 
 	bool ip_specified = false;
@@ -82,7 +75,7 @@ int process_args(int argc, char *argv[]) {
 		
 		if (strcmp(argv[i], "--help") == 0) { // processing help argument
 
-			print_help();
+			fputs(HELP_MSG, stdout);
 			exit(0);
 
 		} else if (strcmp(argv[i], "--port") == 0) { // processing the port
@@ -288,9 +281,6 @@ void* receive_messages_thread(void* arg) {
     int socket = (int)(intptr_t)arg;
     message_t inbound_message;
 
-    // immediate outputs
-    setbuf(stdout, NULL);
-
     while(settings.running){
  
         // read message from the server (ensure no short reads)
@@ -385,10 +375,14 @@ void sig_int_term_handler(int signum) {
 }
 
 int main(int argc, char *argv[]) {
+
+
+    // immediate outputs
+    setbuf(stdout, NULL)
     // setup sigactions (ill-advised to use signal for this project, use sigaction with default (0) flags instead)
     
     // initializing sigaction struct
-    struct sigaction act;
+    struct sigaction act = {0};
 
     // clearing struct fields to disable masking and flags
     sigemptyset(&act.sa_mask);
@@ -429,8 +423,7 @@ int main(int argc, char *argv[]) {
 
     // connect to server
 
-    int connect_status = connect(sockfd, (struct sockaddr *)&settings.server, sizeof(settings.server));
-    if (connect_status == -1) {
+    if (connect(socfd, (struct sockaddr *) &settings.server, sizeof(settings.server)) == -1) {
 	    perror("Error: could not connect to address\n");
 	    close(sockfd);
 	    sockfd = -1;
