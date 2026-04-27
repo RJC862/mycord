@@ -132,6 +132,9 @@ int process_args(int argc, char *argv[]) {
 				// skipping past the ip address since it was processed
 				i++;
 
+			} else {
+				fprintf(stderr, "Error: missing IP address\n");
+				return -1;
 			}
 
 		} else if (strcmp(argv[i], "--domain") == 0 ) { // processing domain name
@@ -240,7 +243,7 @@ ssize_t perform_full_write(int fd, void *buf, size_t n) {
 		ssize_t bytes_written = write(fd, curr_position, remaining);
 		
 		if (bytes_written < 0) {
-			perror("Error: could not send message\n");
+			perror("Error: could not send message");
 			return -1;
 		}
 
@@ -269,7 +272,7 @@ ssize_t perform_full_read(int fd, void *buf, size_t n) {
 		}
 
 		if (bytes_read < 0) {
-			perror("Error: could not read incoming message\n");
+			perror("Error: could not read incoming message");
 			return -1;
 		}
 
@@ -334,7 +337,7 @@ void* receive_messages_thread(void* arg) {
 					fprintf(stdout, "%.*s", (int) (mention_position - current_position), current_position);
 				
 					// the mention with red highlight and ascii bell
-					fprintf(stdout, "%s%s%s", COLOR_RED, mention_format, COLOR_RESET);
+					fprintf(stdout, "\a%s%s%s", COLOR_RED, mention_format, COLOR_RESET);
 
 					current_position = mention_position + strlen(mention_format);
 				}
