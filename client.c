@@ -11,6 +11,80 @@
 #include <signal.h>
 #include <ctype.h>
 #include <stdint.h>
+#include <termios.h>
+
+#define MAX_MESSAGES 500
+#define MAX_MSG_LEN 1100
+
+typedef struct {
+	char lines[MAX_MESSAGES][MAX_MSG_LEN];
+	int msg_count; // total messages stored
+	int scroll_offset; // number of lines scrolled up from the bottom
+} message_buffer_t;
+
+typedef struct{
+	char buf[1024]; // the current input
+	int cursor; // the cursor position in buf
+} input_bar_t;
+
+// getting the terminal size
+struct winsize dimensions;
+
+ioctl(STDOUT_FILENO, TIOCGWINSZ, &dimensions)
+
+
+// wrapping ANSI sequences into readable function names
+
+void clear_screen(void) {
+	printf("\033[2j")
+}
+
+void cursor_home(void){
+	printf("\033[H")
+}
+
+void cursor_to_row_col(void){
+	printf("\033[%d;%dH")
+}
+
+void cursor_save(void){
+	printf("\033[s")
+}
+
+void cursor_restore(void){
+	printf("\033[u")
+}
+
+void erase_line(void){
+	printf("\033[K")
+}
+
+void cursor_hide(void){
+	printf("\033[?25l")
+}
+
+void cursor_show(void){
+	printf("\033[?25h")
+}
+
+static struct termios orig_termios;
+
+void enable_raw_mode(void) {
+	tcgetattr(STDIN_FILENO, &orig_termios);
+
+	struct termios raw = orig_termios;
+
+	// disable canonical mode and echo
+	raw.c_lflag &= ~(ICANON | ECHO);
+	raw.c_cc[VMIN] = 1;
+	raw.c_cc[VTIME] = 0;
+	tcsetatrr(STDIN_FILENO, TCSAFLUSH, &raw);
+}
+
+void disable_raw_mode(void) {
+	tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+}
+
 
 typedef enum MessageType { 
 	LOGIN,
