@@ -430,6 +430,8 @@ void* receive_messages_thread(void* arg) {
 			// printing the date and sender username
 			curr_position += snprintf(formatted+curr_position, MAX_MSG_LEN-curr_position, "[%s] %s: ", time_buffer, inbound_message.username);
 
+			bool mentioned = false;
+
 			if (!settings.quiet){
 
 				// searching for mentions and highlighting
@@ -449,15 +451,22 @@ void* receive_messages_thread(void* arg) {
 					curr_position += snprintf(formatted + curr_position, MAX_MSG_LEN - curr_position, "%.*s", (int) (mention_position - current_position), current_position);
 				
 					// append the mention with red highlight and ascii bell
-					curr_position += snprintf(formatted + curr_position, MAX_MSG_LEN - curr_position, "\a%s%s%s", COLOR_RED, mention_format, COLOR_RESET);
+					curr_position += snprintf(formatted + curr_position, MAX_MSG_LEN - curr_position, "%s%s%s", COLOR_RED, mention_format, COLOR_RESET);
 
 					current_position = mention_position + strlen(mention_format);
+					
+					mentioned = true;
 				}
 
 				// appending the rest of the message
 				curr_position += snprintf(formatted + curr_position, MAX_MSG_LEN - curr_position, "%s\n", current_position);
 			} else {
 				curr_position += snprintf(formatted + curr_position, MAX_MSG_LEN - curr_position, "%s\n", inbound_message.message);
+			}
+
+			// the bell is written to stdout so that the redraw function does not trigger it every time redraw is called
+			if (mentioned) {
+				write(STDOUT_FILENO, "\a", 1);
 			}
 
 			if (settings.tui) {
