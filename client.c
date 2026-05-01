@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdbool.h>
 #include <stdio.h>
 #include <arpa/inet.h>
@@ -12,6 +13,7 @@
 #include <ctype.h>
 #include <stdint.h>
 #include <termios.h>
+#include <sys/ioctl.h>
 
 #define MAX_MESSAGES 500
 #define MAX_MSG_LEN 1100
@@ -27,44 +29,49 @@ typedef struct{
 	int cursor; // the cursor position in buf
 } input_bar_t;
 
-// getting the terminal size
-struct winsize dimensions;
 
-ioctl(STDOUT_FILENO, TIOCGWINSZ, &dimensions)
+void get_terminal_size(int *rows, int *cols){
+	// getting the terminal size
+	struct winsize dimensions;
+
+	ioctl(STDOUT_FILENO, TIOCGWINSZ, &dimensions);
+	*rows = dimensions.ws_row;
+	*cols = dimensions.ws_col;
+}
 
 
 // wrapping ANSI sequences into readable function names
 
 void clear_screen(void) {
-	printf("\033[2j")
+	printf("\033[2j");
 }
 
 void cursor_home(void){
-	printf("\033[H")
+	printf("\033[H");
 }
 
-void cursor_to_row_col(void){
-	printf("\033[%d;%dH")
+void cursor_to_row_col(int row, int col){
+	printf("\033[%d;%dH", row, col);
 }
 
 void cursor_save(void){
-	printf("\033[s")
+	printf("\033[s");
 }
 
 void cursor_restore(void){
-	printf("\033[u")
+	printf("\033[u");
 }
 
 void erase_line(void){
-	printf("\033[K")
+	printf("\033[K");
 }
 
 void cursor_hide(void){
-	printf("\033[?25l")
+	printf("\033[?25l");
 }
 
 void cursor_show(void){
-	printf("\033[?25h")
+	printf("\033[?25h");
 }
 
 static struct termios orig_termios;
@@ -78,7 +85,7 @@ void enable_raw_mode(void) {
 	raw.c_lflag &= ~(ICANON | ECHO);
 	raw.c_cc[VMIN] = 1;
 	raw.c_cc[VTIME] = 0;
-	tcsetatrr(STDIN_FILENO, TCSAFLUSH, &raw);
+	tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
 void disable_raw_mode(void) {
@@ -108,8 +115,13 @@ typedef struct Settings {
     bool disconnected;
     int socket_fd;
     bool running;
+    bool tui;
     char username[32];
 } settings_t;
+
+static message_buffer_t mb = {0};
+static input_bar_t current_ib = {0};
+static pthread_mutex_t mb_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static char* COLOR_RED = "\033[31m";
 static char* COLOR_GRAY = "\033[90m";
@@ -118,6 +130,38 @@ static settings_t settings = {0};
 
 volatile sig_atomic_t signal_status = 0;
 
+void redraw() {
+	struct winsize w;
+	ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+	int rows = w.ws_row;
+	int msg_rows = rows-1;
+
+	write(STDOUT_FILENO, "\033[?25l", 6); // hide cursor during redraw
+
+	// draw messages from the top
+	int start = mb.msg_count - msg_rows - mb.scroll_offset;
+	if (start < 0) start = 0;
+
+	for (int row = 1; row <= msg_rows; row++) {
+
+		// move to row then clear it
+		cursor_to_row_col(row, 1);
+		erase_line();
+
+		int idx = start + (row-1);
+		if (idx < mb.msg_count){
+			printf("%s", mb.lines[idx]);
+		}
+	}
+
+	// draw input bar at bottom
+	cursor_to_row_col(rows, 1);
+	printf("\033[K> %s", current_ib.buf);
+
+	// show cursor
+	write(STDOUT_FILENO, "\033[?25h", 6);
+	fflush(stdout);
+}
 static const char HELP_MSG[] = 	
 		"usage: ./client [-h] [--port PORT] [--ip IP] [--domain DOMAIN] [--quiet]\n\n"
 
@@ -240,6 +284,8 @@ int process_args(int argc, char *argv[]) {
 			// suppress alerts and mention highlighting
 			settings.quiet = true;
 
+		} else if (strcmp(argv[i], "--tui") == 0){
+			settings.tui = true;
 		} else {
 
 			// error: invalid argument
@@ -448,11 +494,119 @@ void sig_int_term_handler(int signum) {
 	return;
 }
 
+void send_chat_message(int sockfd, char *input, ssize_t len){
+	    
+	    // stripping newline character
+	    if (len > 0 && input[len-1] == '\n') {
+		    input[len-1] = '\0';
+		    len--;
+	    }
+
+	    // checking for an empty message
+	    if (len > 1023) {
+		    fprintf(stderr, "Error: message too long (1-1024 characters");
+	    }
+
+	    if (input[0] == '\0') {
+		    fprintf(stderr, "Error: empty message\n");
+		    
+	    }
+
+	    // checking that the message does not contain non printable ascii
+	    int printable = 1;
+
+	    for (int i = 0; i < len; i++) {
+		    if (!isprint(input[i])){
+			    printable = 0;
+			    break;
+		    }
+	    }
+
+	    if (printable == 0){
+		    fprintf(stderr, "Error: Message cannot contain non-printable ASCII characters\n");
+		    
+	    }
+
+
+	    // initialize a struct to hold the message to send
+	    message_t send_message = {0};
+
+	    // setting the message type
+	    send_message.message_type = htonl(MESSAGE_SEND);
+
+	    // copying the message to the message struct
+	    strncpy(send_message.message, input, sizeof(send_message.message)-1);
+	    send_message.message[sizeof(send_message.message)-1] = '\0';
+	
+	    // sending the message to server
+	    if(perform_full_write(sockfd, &send_message, sizeof(send_message)) == -1) {
+		    perror("Error: could not send message\n");
+	    
+	    }
+
+}
+
+void tui_input_loop(int sockfd) {
+	input_bar_t ib = {0};
+
+	enable_raw_mode();
+
+	while (settings.running){
+		char c;
+		if(read(STDIN_FILENO, &c, 1) <= 0) break;
+
+		if (c == '\033'){
+			char seq[2];
+			read(STDIN_FILENO, &seq[0], 1);
+			read(STDIN_FILENO, &seq[1], 1);
+			if (seq[0] == '[') {
+				if (seq[1] == 'A') mb.scroll_offset++; // move up
+				if (seq[1] == 'B') mb.scroll_offset--; // move down
+				if (mb.scroll_offset < 0) mb.scroll_offset = 0;
+			}
+		} else if (c=='\n' || c == '\r') {
+			//submit message
+			if (current_ib.cursor > 0) {
+				current_ib.buf[current_ib.cursor] = '\0';
+
+				//validate and send
+				send_chat_message(sockfd, current_ib.buf, sizeof(current_ib.buf));
+
+				//clear input
+				memset(current_ib.buf, 0, sizeof(current_ib.buf));
+				current_ib.cursor = 0;
+				mb.scroll_offset = 0; // move back to the bottom
+			}
+		} else if (c == 127 || c == '\b') {
+			if (current_ib.cursor >0){
+				current_ib.buf [--current_ib.cursor] = '\0';
+			}
+		} else if (c == 4) {
+			break;
+		} else if (isprint(c) && current_ib.cursor < 1023) {
+			current_ib.buf[current_ib.cursor++] = c;
+		}
+		
+		redraw();
+			
+	}	
+
+	disable_raw_mode();
+}
+
+
+void tui_cleanup(void) {
+	disable_raw_mode();
+	clear_screen();
+	cursor_home();
+	cursor_show();
+}
 int main(int argc, char *argv[]) {
 
 
     // immediate outputs
-    setbuf(stdout, NULL)
+    setbuf(stdout, NULL);
+
     // setup sigactions (ill-advised to use signal for this project, use sigaction with default (0) flags instead)
     
     // initializing sigaction struct
@@ -497,7 +651,7 @@ int main(int argc, char *argv[]) {
 
     // connect to server
 
-    if (connect(socfd, (struct sockaddr *) &settings.server, sizeof(settings.server)) == -1) {
+    if (connect(sockfd, (struct sockaddr *) &settings.server, sizeof(settings.server)) == -1) {
 	    perror("Error: could not connect to address\n");
 	    close(sockfd);
 	    sockfd = -1;
@@ -539,68 +693,23 @@ int main(int argc, char *argv[]) {
     char *input = NULL;
     size_t len = 0;
 
-    while(settings.running) {
+    if (settings.tui) {
+	    tui_input_loop(sockfd);
+    } else{
 
-	    // reading input from stdin
-	    ssize_t bytes_read = getline(&input, &len, stdin);
+   	 while(settings.running) {
+	   	  
+	 	  // reading input from stdin
+	  	  ssize_t bytes_read = getline(&input, &len, stdin);
 
-	    // logout and cleanup on any signal
-	    if (signal_status != 0 || bytes_read == -1) {
-		settings.running = false;
-		break;
-	    }
+	  	  // logout and cleanup on any signal
+	 	   if (signal_status != 0 || bytes_read == -1) {
+			settings.running = false;
+			break;
+	  	  }
 
-
-	    // stripping newline character
-	    if (bytes_read > 0 && input[bytes_read-1] == '\n') {
-		    input[bytes_read-1] = '\0';
-		    bytes_read--;
-	    }
-
-	    if (bytes_read > 1023) {
-		    fprintf(stderr, "Error: Message too long (1 - 1023 chars)\n");
-		    
-	    }
-
-	    // checking for an empty message
-	    
-	    if (input[0] == '\0') {
-		    fprintf(stderr, "Error: empty message\n");
-		    
-	    }
-
-	    // checking that the message does not contain non printable ascii
-	    int printable = 1;
-
-	    for (int i = 0; i < bytes_read; i++) {
-		    if (!isprint(input[i])){
-			    printable = 0;
-			    break;
-		    }
-	    }
-
-	    if (printable == 0){
-		    fprintf(stderr, "Error: Message cannot contain non-printable ASCII characters\n");
-		    
-	    }
-
-
-	    // initialize a struct to hold the message to send
-	    message_t send_message = {0};
-
-	    // setting the message type
-	    send_message.message_type = htonl(MESSAGE_SEND);
-
-	    // copying the message to the message struct
-	    strncpy(send_message.message, input, sizeof(send_message.message)-1);
-	    send_message.message[sizeof(send_message.message)-1] = '\0';
-	
-	    // sending the message to server
-	    if(perform_full_write(sockfd, &send_message, sizeof(send_message)) == -1) {
-		    perror("Error: could not send message\n");
-		    
-	    }
-
+	   	 send_chat_message(sockfd, input, bytes_read);
+  	  }
     }
 
     // logging out
