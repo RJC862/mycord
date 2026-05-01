@@ -43,7 +43,7 @@ void get_terminal_size(int *rows, int *cols){
 // wrapping ANSI sequences into readable function names
 
 void clear_screen(void) {
-	printf("\033[2j");
+	printf("\033[2J");
 }
 
 void cursor_home(void){
@@ -402,6 +402,8 @@ void* receive_messages_thread(void* arg) {
     message_t inbound_message;
 
     while(settings.running){
+	    char formatted[MAX_MSG_LEN] = {0};
+	    int curr_position = 0; // variable storing position of last copied character in formatted string buffer
  
         // read message from the server (ensure no short reads)
 	if (perform_full_read(socket, &inbound_message, sizeof(inbound_message)) <= 0) {
@@ -426,7 +428,7 @@ void* receive_messages_thread(void* arg) {
 			strftime(time_buffer, sizeof(time_buffer), "%Y-%m-%d %H:%M:%S", &structured_time);
 
 			// printing the date and sender username
-			fprintf(stdout, "[%s] %s: ", time_buffer, inbound_message.username);
+			curr_position += snprintf(formatted+curr_position, MAX_MSG_LEN-curr_position, "[%s] %s: ", time_buffer, inbound_message.username);
 
 			if (!settings.quiet){
 
@@ -443,32 +445,62 @@ void* receive_messages_thread(void* arg) {
 				// searching for mentions
 				while ((mention_position = strstr(current_position, mention_format)) != NULL){
 		
-					// print everything before the mention
-					fprintf(stdout, "%.*s", (int) (mention_position - current_position), current_position);
+					// append everything before the mention
+					curr_position += snprintf(formatted + curr_position, MAX_MSG_LEN - curr_position, "%.*s", (int) (mention_position - current_position), current_position);
 				
-					// the mention with red highlight and ascii bell
-					fprintf(stdout, "\a%s%s%s", COLOR_RED, mention_format, COLOR_RESET);
+					// append the mention with red highlight and ascii bell
+					curr_position += snprintf(formatted + curr_position, MAX_MSG_LEN - curr_position, "\a%s%s%s", COLOR_RED, mention_format, COLOR_RESET);
 
 					current_position = mention_position + strlen(mention_format);
 				}
 
-				// printing the rest of the message
-				fprintf(stdout, "%s\n", current_position);
+				// appending the rest of the message
+				curr_position += snprintf(formatted + curr_position, MAX_MSG_LEN - curr_position, "%s\n", current_position);
 			} else {
-				fprintf(stdout, "%s\n", inbound_message.message);
+				curr_position += snprintf(formatted + curr_position, MAX_MSG_LEN - curr_position, "%s\n", inbound_message.message);
+			}
+
+			if (settings.tui) {
+				pthread_mutex_lock(&mb_lock);
+				strncpy(mb.lines[mb.msg_count % MAX_MESSAGES], formatted, MAX_MSG_LEN - 1);
+				mb.msg_count++;
+				redraw();
+				pthread_mutex_unlock(&mb_lock);
+			} else {
+				fprintf(stdout, "%s", formatted);
 			}
 			break;
-				   }
+		}
 
 		case SYSTEM:{
-			fprintf(stdout, "%s[SYSTEM] %s%s\n", COLOR_GRAY, inbound_message.message, COLOR_RESET);
+			snprintf(formatted, MAX_MSG_LEN, "%s[SYSTEM] %s%s\n", COLOR_GRAY, inbound_message.message, COLOR_RESET);
+			
+			if(settings.tui) {
+				strncpy(mb.lines[mb.msg_count % MAX_MESSAGES], formatted, MAX_MSG_LEN -1);
+				mb.msg_count++;
+				redraw();
+				pthread_mutex_unlock(&mb_lock);
+			} else {
+				fprintf(stdout, "%s", formatted);
+			}
+			
 			break;
-			    }
+		}
 
 		case DISCONNECT: {
 
-			fprintf(stdout, "%s[DISCONNECT] %s%s\n", COLOR_RED, inbound_message.message, COLOR_RESET);
+			snprintf(formatted, MAX_MSG_LEN, "%s[DISCONNECT] %s%s\n", COLOR_RED, inbound_message.message, COLOR_RESET);
 			
+			if(settings.tui) {
+				pthread_mutex_lock(&mb_lock);
+				strncpy(mb.lines[mb.msg_count & MAX_MESSAGES], formatted, MAX_MSG_LEN -1);
+				mb.msg_count++;
+				redraw();
+				pthread_mutex_unlock(&mb_lock);
+			} else {
+				fprintf(stdout, "%s", formatted);
+			}
+
 			settings.disconnected = true;
 
 			// End connection
@@ -504,12 +536,13 @@ void send_chat_message(int sockfd, char *input, ssize_t len){
 
 	    // checking for an empty message
 	    if (len > 1023) {
-		    fprintf(stderr, "Error: message too long (1-1024 characters");
+		    fprintf(stderr, "Error: message too long (1-1024 characters\n");
+		    return;
 	    }
 
 	    if (input[0] == '\0') {
 		    fprintf(stderr, "Error: empty message\n");
-		    
+		    return;
 	    }
 
 	    // checking that the message does not contain non printable ascii
@@ -524,7 +557,7 @@ void send_chat_message(int sockfd, char *input, ssize_t len){
 
 	    if (printable == 0){
 		    fprintf(stderr, "Error: Message cannot contain non-printable ASCII characters\n");
-		    
+		    return;
 	    }
 
 
@@ -547,7 +580,6 @@ void send_chat_message(int sockfd, char *input, ssize_t len){
 }
 
 void tui_input_loop(int sockfd) {
-	input_bar_t ib = {0};
 
 	enable_raw_mode();
 
@@ -560,9 +592,20 @@ void tui_input_loop(int sockfd) {
 			read(STDIN_FILENO, &seq[0], 1);
 			read(STDIN_FILENO, &seq[1], 1);
 			if (seq[0] == '[') {
+
+				struct winsize w;
+				ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+				int msg_rows = w.ws_row - 1;
+
 				if (seq[1] == 'A') mb.scroll_offset++; // move up
 				if (seq[1] == 'B') mb.scroll_offset--; // move down
-				if (mb.scroll_offset < 0) mb.scroll_offset = 0;
+
+				if (mb.scroll_offset < 0) mb.scroll_offset = 0; // can't scroll past bottom
+
+				// can't scroll past the top
+				int max_scroll = mb.msg_count - msg_rows;
+				if (max_scroll < 0) max_scroll = 0;
+				if (mb.scroll_offset > max_scroll) mb.scroll_offset = max_scroll;
 			}
 		} else if (c=='\n' || c == '\r') {
 			//submit message
@@ -570,7 +613,7 @@ void tui_input_loop(int sockfd) {
 				current_ib.buf[current_ib.cursor] = '\0';
 
 				//validate and send
-				send_chat_message(sockfd, current_ib.buf, sizeof(current_ib.buf));
+				send_chat_message(sockfd, current_ib.buf, current_ib.cursor);
 
 				//clear input
 				memset(current_ib.buf, 0, sizeof(current_ib.buf));
@@ -731,5 +774,9 @@ int main(int argc, char *argv[]) {
     // cleaning up
     free(input);
     input = NULL;
+
+    if(settings.tui){
+	    tui_cleanup();
+    }
     return 0;
 }
