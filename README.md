@@ -1,3 +1,10 @@
+# Overview
+This was my final project for my Intro to Systems Programming Course. See project description & details below.
+Aptly named after Discord, this project is a simple messaging program allowing users to communicate across network servers. Very basic implementation written in C.
+I gained hands-on experience with network ports, sockets, TCP, and other basic network concepts. 
+
+Source code is in client.c
+
 # mycord Final Programming Assignment
 
 In this assignment, you are going to implement your own client for the `mycord` chat service. You will utilize many aspects of typing, dynamic memory, IO, signals, networking, and mulithreading in C and Linux/Unix. You'll get experience implementing a protocol using sockets on TCP IPv4, with associated error handling and argument parsing.
